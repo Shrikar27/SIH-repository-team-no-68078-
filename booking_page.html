@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conductor App Prototype</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet CSS for the map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        /* Custom scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #e0e7ff; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #4338ca; }
+        #map {
+            height: 120px;
+            width: 120px;
+            border-radius: 1rem;
+            border: 4px solid white;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .leaflet-control-attribution {
+            display: none !important;
+        }
+        .leaflet-popup-content-wrapper {
+            background-color: #4f46e5;
+            color: white;
+            border-radius: 8px;
+        }
+        .leaflet-popup-tip {
+             background-color: #4f46e5;
+        }
+        .leaflet-popup-content {
+            font-size: 12px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6 space-y-5">
+        
+        <!-- Header with Integrated Map -->
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">Conductor Panel</h1>
+                <p class="text-sm text-gray-500" id="bus-id-header">Bus: BUS101 | Route #102</p>
+            </div>
+            <div id="map"></div>
+        </div>
+
+        <!-- Bus Status -->
+        <div class="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-4">
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                    <p class="text-sm font-semibold text-indigo-800">Passengers</p>
+                    <p id="passenger-count" class="text-3xl font-bold text-indigo-600">0</p>
+                </div>
+                <div>
+                    <p class="text-sm font-semibold text-indigo-800">Total Seats</p>
+                    <p id="total-seats" class="text-3xl font-bold text-gray-600">50</p>
+                </div>
+                <div>
+                    <p class="text-sm font-semibold text-indigo-800">Free Seats</p>
+                    <p id="free-seats" class="text-3xl font-bold text-green-600">50</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Current Stop & Proximity Alert -->
+        <div class="text-center bg-gray-50 p-4 rounded-xl space-y-2">
+             <div>
+                <h3 class="text-md font-semibold text-gray-700">Current Location</h3>
+                <p id="current-stop" class="text-xl font-bold text-indigo-700">Broadway</p>
+             </div>
+             <div id="proximity-alert" class="hidden bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-2 rounded-md text-sm">
+                <p><i class="fas fa-exclamation-triangle mr-2"></i>Approaching: <strong id="next-stop-name"></strong></p>
+             </div>
+        </div>
+        
+        <!-- Issue Ticket Section -->
+        <div class="space-y-3 bg-gray-50 p-4 rounded-xl">
+            <h3 class="text-md font-semibold text-gray-700 text-center">Onboard New Passengers</h3>
+            <div class="grid grid-cols-2 gap-3">
+                 <div>
+                    <label for="num-passengers-on" class="text-xs font-medium text-gray-600">Boarding</label>
+                    <input type="number" id="num-passengers-on" value="1" min="1" class="w-full p-2 text-center border rounded-md focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label for="destination-stop" class="text-xs font-medium text-gray-600">Destination</label>
+                    <select id="destination-stop" class="w-full p-2 border rounded-md bg-white focus:ring-2 focus:ring-indigo-500"></select>
+                </div>
+            </div>
+            <button id="issue-ticket-btn" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-indigo-700 transition-all transform hover:scale-105">
+                <i class="fas fa-ticket-alt mr-2"></i> Issue Ticket(s)
+            </button>
+        </div>
+        
+        <!-- Passenger Destination Summary -->
+        <div class="space-y-2">
+            <h3 class="text-md font-semibold text-gray-700">Passenger Destinations</h3>
+            <div id="destination-summary" class="custom-scrollbar bg-gray-50 h-28 p-3 border rounded-lg text-sm text-gray-800 overflow-y-auto space-y-2">
+                <p class="text-gray-400 text-center italic pt-4">No passengers on board.</p>
+            </div>
+        </div>
+
+        <!-- Toast Notification -->
+        <div id="toast" class="fixed bottom-5 right-5 bg-gray-900 text-white py-3 px-5 rounded-lg shadow-xl opacity-0 translate-y-10 transition-all duration-300 flex items-center space-x-3">
+             <i id="toast-icon" class="fas fa-check-circle text-green-400"></i>
+            <p id="toast-message"></p>
+        </div>
+    </div>
+
+    <!-- Leaflet JS for the map -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+        // --- CONFIGURATION & STATE ---
+        const BACKEND = "http://127.0.0.1:8000"; 
+
+        // read busId from query params (fallback to BUS101 if not provided)
+        const urlParams = new URLSearchParams(window.location.search);
+        const busIdFromUrl = urlParams.get('busId');
+        const busId = busIdFromUrl || "BUS101";                 
+
+        const ROUTE_NAME = "Route 102";
+        const TOTAL_SEATS = 50;
+        const SIMULATION_SPEED = 0.0001; 
+
+        const busRoute = [
+            { name: 'Broadway', lat: 13.0921, lon: 80.2855 },
+            { name: 'Chennai Central', lat: 13.0827, lon: 80.2755 },
+            { name: 'Egmore', lat: 13.0780, lon: 80.2610 },
+            { name: 'Saidapet', lat: 13.021, lon: 80.2222 },
+            { name: 'Guindy', lat: 13.0067, lon: 80.2142 },
+            { name: 'Alandur', lat: 13.0040, lon: 80.1980 },
+            { name: 'Nanganallur', lat: 12.9960, lon: 80.1880 },
+            { name: 'Meenambakkam', lat: 12.9875, lon: 80.1800 },
+            { name: 'Airport', lat: 12.9944, lon: 80.1700 }
+        ];
+
+        let currentState = {
+            currentStopIndex: 0,
+            alightingPlan: {},
+            busLocation: { lat: busRoute[0].lat, lon: busRoute[0].lon },
+            isMoving: false,
+        };
+        
+        let map, busMarker;
+
+        // --- DOM ELEMENTS ---
+        const passengerCountEl = document.getElementById('passenger-count');
+        const totalSeatsEl = document.getElementById('total-seats');
+        const freeSeatsEl = document.getElementById('free-seats');
+        const currentStopEl = document.getElementById('current-stop');
+        const numPassengersOnEl = document.getElementById('num-passengers-on');
+        const destinationStopEl = document.getElementById('destination-stop');
+        const issueTicketBtn = document.getElementById('issue-ticket-btn');
+        const destinationSummaryEl = document.getElementById('destination-summary');
+        const proximityAlertEl = document.getElementById('proximity-alert');
+        const nextStopNameEl = document.getElementById('next-stop-name');
+        const busIdHeaderEl = document.getElementById('bus-id-header');
+
+        // --- HELPERS ---
+        function getTotalPassengerCount() {
+            return Object.values(currentState.alightingPlan).reduce((sum, count) => sum + count, 0);
+        }
+
+        function updateDestinationDropdown() {
+            destinationStopEl.innerHTML = '';
+            for (let i = currentState.currentStopIndex + 1; i < busRoute.length; i++) {
+                const option = document.createElement('option');
+                option.value = busRoute[i].name;
+                option.textContent = busRoute[i].name;
+                destinationStopEl.appendChild(option);
+            }
+        }
+
+        function updateDestinationSummary() {
+            destinationSummaryEl.innerHTML = '';
+            const passengerCount = getTotalPassengerCount();
+
+            if (passengerCount === 0) {
+                 destinationSummaryEl.innerHTML = '<p class="text-gray-400 text-center italic pt-4">No passengers on board.</p>';
+                 return;
+            }
+
+            const sortedStops = Object.keys(currentState.alightingPlan).sort((a, b) => {
+                const indexA = busRoute.findIndex(stop => stop.name === a);
+                const indexB = busRoute.findIndex(stop => stop.name === b);
+                return indexA - indexB;
+            });
+
+            sortedStops.forEach(stopName => {
+                 if (currentState.alightingPlan[stopName] > 0) {
+                    const entry = document.createElement('div');
+                    entry.className = 'flex justify-between items-center p-2 bg-white rounded-md shadow-sm';
+                    entry.innerHTML = `<span><i class="fas fa-map-marker-alt text-gray-400 mr-3"></i>${stopName}</span><span class="font-bold bg-indigo-100 text-indigo-700 px-2.5 py-0.5 rounded-full text-xs">${currentState.alightingPlan[stopName]}</span>`;
+                    destinationSummaryEl.appendChild(entry);
+                }
+            });
+        }
+
+        function updateUI() {
+            const passengerCount = getTotalPassengerCount();
+            
+            passengerCountEl.textContent = passengerCount;
+            totalSeatsEl.textContent = TOTAL_SEATS;
+            const freeSeats = TOTAL_SEATS - passengerCount;
+            freeSeatsEl.textContent = freeSeats < 0 ? 0 : freeSeats;
+            freeSeatsEl.className = `text-3xl font-bold ${freeSeats <= 5 ? 'text-red-600' : 'text-green-600'}`;
+
+            const currentStopName = busRoute[currentState.currentStopIndex].name;
+            currentStopEl.textContent = currentStopName;
+
+            busIdHeaderEl.textContent = `Bus: ${busId} | ${ROUTE_NAME}`;
+
+            updateDestinationDropdown();
+            updateDestinationSummary();
+        }
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMessage.textContent = message;
+            if(isError) {
+                toastIcon.className = "fas fa-exclamation-circle text-red-400";
+                toast.classList.add('bg-red-800');
+                toast.classList.remove('bg-gray-900');
+            } else {
+                toastIcon.className = "fas fa-check-circle text-green-400";
+                toast.classList.add('bg-gray-900');
+                toast.classList.remove('bg-red-800');
+            }
+            
+            toast.classList.remove('opacity-0', 'translate-y-10');
+            
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-10');
+            }, 3000);
+        }
+        
+        function haversineDistance(coords1, coords2) {
+            function toRad(x) { return x * Math.PI / 180; }
+            const R = 6371; // km
+            const dLat = toRad(coords2.lat - coords1.lat);
+            const dLon = toRad(coords2.lon - coords1.lon);
+            const lat1 = toRad(coords1.lat);
+            const lat2 = toRad(coords2.lat);
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.sin(dLon/2) * Math.sin(dLon/2) * Math.cos(lat1) * Math.cos(lat2); 
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+            return R * c * 1000; // meters
+        }
+
+        // --- BACKEND PUSH FUNCTIONS ---
+        async function pushBusUpdateToBackend() {
+            const payload = {
+                bus_id: busId,
+                latitude: currentState.busLocation.lat,
+                longitude: currentState.busLocation.lon,
+                occupancy: getTotalPassengerCount(),
+                route: ROUTE_NAME
+            };
+            try {
+                const r = await fetch(BACKEND + "/update", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(payload)
+                });
+                if (!r.ok) {
+                    console.warn("backend update failed", r.status, await r.text());
+                } else {
+                    // optional debug:
+                    // console.log("backend updated", await r.json());
+                }
+            } catch (err) {
+                console.error("pushBusUpdateToBackend err:", err);
+            }
+        }
+
+        // call updateUI() and then push to backend
+        function updateUIAndPush() {
+            updateUI();
+            pushBusUpdateToBackend();
+        }
+
+        // --- MAP & SIMULATION ---
+        function initMap() {
+            const initialLocation = [currentState.busLocation.lat, currentState.busLocation.lon];
+            map = L.map('map', { zoomControl: false }).setView(initialLocation, 14); // Zoom out a bit
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            busRoute.forEach(stop => {
+                L.circleMarker([stop.lat, stop.lon], { radius: 5, color: '#4f46e5', fillOpacity: 0.8 }).addTo(map)
+                    .bindPopup(stop.name);
+            });
+
+            var busIcon = L.divIcon({
+                html: '<i class="fa fa-bus fa-2x text-indigo-600 drop-shadow-lg"></i>',
+                className: 'bg-transparent border-0',
+                iconSize: [24, 24],
+                iconAnchor: [12, 24]
+            });
+
+            busMarker = L.marker(initialLocation, { icon: busIcon }).addTo(map);
+            // push initial state to backend
+            pushBusUpdateToBackend();
+        }
+
+        // --------- REPLACED simulateGpsMovement (improved) ----------
+        function simulateGpsMovement() {
+            if (!currentState.isMoving) return;
+            
+            const nextStopIndex = currentState.currentStopIndex + 1;
+            if (nextStopIndex >= busRoute.length) {
+                currentState.isMoving = false;
+                return;
+            }
+
+            const nextStop = busRoute[nextStopIndex];
+            const currentLoc = currentState.busLocation;
+            
+            const dirLat = nextStop.lat - currentLoc.lat;
+            const dirLon = nextStop.lon - currentLoc.lon;
+            currentLoc.lat += dirLat * SIMULATION_SPEED;
+            currentLoc.lon += dirLon * SIMULATION_SPEED;
+
+            const newLatLng = [currentLoc.lat, currentLoc.lon];
+            if (busMarker) busMarker.setLatLng(newLatLng);
+            try { map.panTo(newLatLng, { animate: true, duration: 0.1 }); } catch(e) {}
+
+            const distanceToNextStop = haversineDistance(currentLoc, nextStop);
+            
+            
+            if (distanceToNextStop < 400) {
+                proximityAlertEl.classList.remove('hidden');
+                nextStopNameEl.textContent = `${nextStop.name} (${Math.round(distanceToNextStop)}m)`;
+            } else {
+                proximityAlertEl.classList.add('hidden');
+            }
+
+            
+            try {
+                const currName = busRoute[currentState.currentStopIndex].name;
+                currentStopEl.textContent = currName;
+            } catch(e){}
+
+            
+            if (distanceToNextStop < 30) {
+                currentState.isMoving = false;
+                currentState.currentStopIndex = nextStopIndex;
+                
+                const currentStopName = busRoute[currentState.currentStopIndex].name;
+                const numToAlight = currentState.alightingPlan[currentStopName] || 0;
+
+                if (numToAlight > 0) {
+                    showToast(`${numToAlight} passengers alighted at ${currentStopName}.`);
+                    delete currentState.alightingPlan[currentStopName];
+                } else {
+                    showToast(`Arrived at ${currentStopName}.`);
+                }
+                
+                proximityAlertEl.classList.add('hidden');
+
+               
+                updateUI();            
+                pushBusUpdateToBackend();
+
+                
+                updateDestinationDropdown();
+            }
+        }
+
+        
+        issueTicketBtn.addEventListener('click', () => {
+            const numToBoard = parseInt(numPassengersOnEl.value, 10);
+            const destination = destinationStopEl.value;
+
+            if (isNaN(numToBoard) || numToBoard <= 0) {
+                showToast("Please enter a valid number of passengers.", true);
+                return;
+            }
+            if (!destination) {
+                showToast("Please select a destination stop.", true);
+                return;
+            }
+
+            currentState.alightingPlan[destination] = (currentState.alightingPlan[destination] || 0) + numToBoard;
+            
+            showToast(`${numToBoard} ticket(s) to ${destination} issued.`);
+            updateUIAndPush(); 
+            
+            if (!currentState.isMoving && currentState.currentStopIndex < busRoute.length - 1) {
+                currentState.isMoving = true;
+            }
+        });
+        
+        // periodic push while moving (throttles updates to every 4s)
+        setInterval(() => {
+            if (currentState.isMoving) {
+                pushBusUpdateToBackend();
+            }
+        }, 4000);
+
+        // --- INITIALIZATION ---
+        // fetch bus info from backend to sync initial occupancy/route
+        async function fetchBusInfo() {
+            try {
+                const res = await fetch(`${BACKEND}/bus/${busId}`);
+                if (res.ok) {
+                    const data = await res.json();
+                   
+                    busIdHeaderEl.textContent = `Bus: ${busId} | ${data.route || "Route"}`;
+                    
+                    if (typeof data.occupancy === 'number') {
+                       
+                        currentState.alightingPlan = {};
+                        // show occupancy
+                        passengerCountEl.textContent = data.occupancy;
+                        freeSeatsEl.textContent = TOTAL_SEATS - data.occupancy;
+                    }
+                    // If backend sent location, sync currentState.busLocation
+                    if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+                        currentState.busLocation.lat = data.latitude;
+                        currentState.busLocation.lon = data.longitude;
+                    }
+                } else {
+                    console.warn("Could not load bus info", res.status);
+                }
+            } catch (err) {
+                console.error("fetchBusInfo error:", err);
+            }
+        }
+
+        window.onload = () => {
+            try { fetchBusInfo(); } catch(e){}
+            updateUI();
+            try { updateDestinationDropdown(); } catch(e){}
+            try {
+                initMap();
+                setInterval(simulateGpsMovement, 100);
+            } catch(e) {
+                console.error("Failed to initialize map:", e);
+                alert("Could not initialize the map. Please check the browser console for errors.");
+            }
+        };
+
+    </script>
+</body>
+</html>

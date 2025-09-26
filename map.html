@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Live Bus Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+        #map {
+            height: 100%;
+            width: 100%;
+            z-index: 10;
+        }
+        #info-panel {
+            z-index: 20;
+            transition: transform 0.3s ease-in-out;
+        }
+        .leaflet-control-attribution, .leaflet-control-zoom {
+            display: none !important;
+        }
+        
+        @media (max-width:640px){
+            #info-panel { max-width: 100% !important; left: 0 !important; right: 0 !important; border-radius: 0.75rem 0.75rem 0 0; }
+        }
+    </style>
+</head>
+<body class="relative">
+
+    <div id="map"></div>
+
+    <div id="info-panel" class="absolute bottom-0 left-0 right-0 bg-white p-4 pt-5 rounded-t-2xl shadow-[0_-10px_30px_-15px_rgba(0,0,0,0.3)] w-full max-w-xl mx-auto">
+        
+        <div class="flex justify-between items-center mb-4">
+            <div>
+                <h1 class="text-xl font-bold text-gray-800" id="route-title">Live Route</h1>
+                <p class="text-sm text-gray-500" id="bus-id-title">Bus</p>
+            </div>
+            <div class="text-center bg-green-100 border border-green-300 rounded-lg px-3 py-1">
+                <p class="text-sm font-semibold text-green-800">Seats Available</p>
+                <p id="free-seats" class="text-2xl font-bold text-green-700">--</p>
+            </div>
+        </div>
+
+        
+        <div class="space-y-3">
+             <div class="flex items-center space-x-3">
+                <i class="fas fa-map-marker-alt text-gray-400 text-xl w-6 text-center"></i>
+                <div>
+                    <p class="text-xs text-gray-500">Last Stop</p>
+                    <p id="last-stop" class="font-semibold text-gray-700">N/A</p>
+                </div>
+             </div>
+             <div class="flex items-center space-x-3">
+                <i class="fas fa-arrow-down text-indigo-500 text-xl w-6 text-center"></i>
+                <div>
+                    <p class="text-xs text-indigo-500">Next Stop</p>
+                    <p id="next-stop" class="font-bold text-lg text-indigo-600">N/A</p>
+                </div>
+             </div>
+        </div>
+
+        <div class="text-center pt-3">
+            <p class="text-xs text-gray-400">Live Tracking...</p>
+        </div>
+
+        
+        <div class="pt-4 flex space-x-3">
+            <a id="book-ticket-btn" class="flex-1 hidden justify-center items-center bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-indigo-700 transition-all" href="#">
+                <i class="fas fa-ticket-alt mr-2"></i> Book Ticket
+            </a>
+            <button id="focus-bus-btn" class="flex-1 hidden justify-center items-center bg-gray-100 text-gray-700 font-semibold py-2 px-4 rounded-lg border hover:bg-gray-200 transition-all">
+                Focus
+            </button>
+            <button id="clear-selection-btn" class="flex-1 hidden justify-center items-center bg-red-100 text-red-700 font-semibold py-2 px-4 rounded-lg border hover:bg-red-200 transition-all">
+                Clear
+            </button>
+        </div>
+    </div>
+
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // -------- CONFIG -------
+        const BACKEND = "http://127.0.0.1:8000"; 
+        const TOTAL_SEATS = 50;
+
+        // -------- STATE --------
+        let map, busMarkerMap = {};
+        let selectedBusId = null;
+        let selectedBusData = null;
+
+       
+        const freeSeatsEl = document.getElementById('free-seats');
+        const lastStopEl = document.getElementById('last-stop');
+        const nextStopEl = document.getElementById('next-stop');
+        const routeTitleEl = document.getElementById('route-title');
+        const busIdTitleEl = document.getElementById('bus-id-title');
+        const bookBtn = document.getElementById('book-ticket-btn');
+        const focusBtn = document.getElementById('focus-bus-btn');
+        const clearBtn = document.getElementById('clear-selection-btn');
+
+        // -------- HELPERS --------
+        function getBusIcon(occupancy) {
+            const color = (occupancy <= 20) ? '#10b981' : (occupancy <= 40) ? '#f59e0b' : '#ef4444';
+            return L.divIcon({
+                html: `<div style="background:${color}; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-weight:bold;">🚌</div>`,
+                className: ''
+            });
+        }
+
+        function updateUIFromBus(bus) {
+            selectedBusData = bus;
+            const occupancy = Number(bus.occupancy ?? bus.passenger_count ?? 0);
+            const freeSeats = TOTAL_SEATS - occupancy;
+            freeSeatsEl.textContent = freeSeats < 0 ? 0 : freeSeats;
+            freeSeatsEl.className = `text-2xl font-bold ${freeSeats <= 5 ? 'text-red-600' : 'text-green-700'}`;
+
+            lastStopEl.textContent = bus.last_stop || "N/A";
+            nextStopEl.textContent = bus.next_stop || "N/A";
+            routeTitleEl.textContent = bus.route ? `Route: ${bus.route}` : "Live Route";
+            busIdTitleEl.textContent = bus.bus_id ? `Bus ${bus.bus_id}` : (bus.busId ? `Bus ${bus.busId}` : "Bus");
+
+            
+            const id = bus.bus_id || bus.busId || null;
+            if (id) {
+                bookBtn.href = `booking_page.html?busId=${encodeURIComponent(id)}`;
+                bookBtn.classList.remove('hidden');
+                focusBtn.classList.remove('hidden');
+                clearBtn.classList.remove('hidden');
+            } else {
+                bookBtn.classList.add('hidden');
+                focusBtn.classList.add('hidden');
+                clearBtn.classList.add('hidden');
+            }
+
+            selectedBusId = id;
+        }
+
+        function clearSelection() {
+            selectedBusId = null;
+            selectedBusData = null;
+            
+            freeSeatsEl.textContent = "--";
+            lastStopEl.textContent = "N/A";
+            nextStopEl.textContent = "N/A";
+            routeTitleEl.textContent = "Live Route";
+            busIdTitleEl.textContent = "Bus";
+            bookBtn.classList.add('hidden');
+            focusBtn.classList.add('hidden');
+            clearBtn.classList.add('hidden');
+        }
+
+        function upsertBusMarker(bus) {
+            const id = bus.bus_id || bus.busId || ("unknown-" + Math.random().toString(36).slice(2,6));
+            const lat = Number(bus.latitude ?? bus.lat);
+            const lon = Number(bus.longitude ?? bus.lon);
+            const occupancy = Number(bus.occupancy ?? bus.passenger_count ?? 0);
+
+            if (!lat || !lon || Number.isNaN(lat) || Number.isNaN(lon)) return;
+
+            if (!busMarkerMap[id]) {
+                const marker = L.marker([lat, lon], { icon: getBusIcon(occupancy) }).addTo(map)
+                    .bindPopup(`<div style="min-width:120px"><b>${id}</b><br/>occ: ${occupancy}<br/>route: ${bus.route || 'N/A'}<br/><a href="booking_page.html?busId=${encodeURIComponent(id)}" style="display:inline-block;margin-top:6px;padding:6px 8px;background:#4f46e5;color:white;border-radius:6px;text-decoration:none;font-size:12px;">Book Ticket</a></div>`);
+                
+                marker.__busId = id;
+                marker.__busData = bus;
+                marker.on('click', function(e){
+                    
+                    updateUIFromBus(this.__busData || bus);
+                });
+                busMarkerMap[id] = marker;
+            } else {
+                busMarkerMap[id].setLatLng([lat, lon]);
+                busMarkerMap[id].setIcon(getBusIcon(occupancy));
+                
+                busMarkerMap[id].setPopupContent(`<div style="min-width:120px"><b>${id}</b><br/>occ: ${occupancy}<br/>route: ${bus.route || 'N/A'}<br/><a href="booking_page.html?busId=${encodeURIComponent(id)}" style="display:inline-block;margin-top:6px;padding:6px 8px;background:#4f46e5;color:white;border-radius:6px;text-decoration:none;font-size:12px;">Book Ticket</a></div>`);
+                
+                busMarkerMap[id].__busData = bus;
+            }
+        }
+
+        async function fetchAndRenderBuses() {
+            try {
+                const res = await fetch(BACKEND + "/buses");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const arr = Array.isArray(data) ? data : Object.values(data || {});
+                if (arr.length === 0) {
+                    return;
+                }
+
+                
+                arr.forEach(b => upsertBusMarker(b));
+
+                
+                if (!selectedBusId) {
+                    const latlngs = arr.filter(b=> (b.latitude || b.lat) && (b.longitude || b.lon))
+                                        .map(b => [b.latitude ?? b.lat, b.longitude ?? b.lon]);
+                    if (latlngs.length) {
+                        const bounds = L.latLngBounds(latlngs);
+                        map.fitBounds(bounds.pad(0.12));
+                    }
+                    
+                    updateUIFromBus(arr[0]);
+                } else {
+                    
+                    const newest = arr.find(b => (b.bus_id === selectedBusId) || (b.busId === selectedBusId));
+                    if (newest) updateUIFromBus(newest);
+                }
+            } catch (err) {
+                console.error("fetchAndRenderBuses error:", err);
+            }
+        }
+
+        function initMap() {
+            const initialLocation = [13.0827, 80.2707]; 
+            map = L.map('map', { zoomControl: false }).setView(initialLocation, 13);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: 'CARTO'
+            }).addTo(map);
+        }
+
+        // UI button hooksuh
+        focusBtn.addEventListener('click', () => {
+            if (!selectedBusId) return;
+            const m = busMarkerMap[selectedBusId];
+            if (m) {
+                map.setView(m.getLatLng(), Math.max(map.getZoom(), 15));
+                m.openPopup();
+            }
+        });
+
+        clearBtn.addEventListener('click', () => { clearSelection(); });
+
+        // -------- INIT --------
+        window.onload = () => {
+            initMap();
+            fetchAndRenderBuses();
+            setInterval(fetchAndRenderBuses, 4000); 
+        };
+    </script>
+    <script>
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+    const toRad = (x) => x * Math.PI / 180;
+    const R = 6371e3; 
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+
+const MASTER_STOPS = [
+  {name: "Chennai Central", lat:13.0827, lon:80.2707},
+  {name: "Egmore", lat:13.0780, lon:80.2610},
+  {name: "T. Nagar", lat:13.0360, lon:80.2370},
+  {name: "Guindy", lat:13.0067, lon:80.2142},
+  {name: "Meenambakkam", lat:12.9875, lon:80.1800},
+  
+];
+
+
+function findNearestStop(lat, lon, stops = MASTER_STOPS) {
+    let best = null;
+    for (const s of stops) {
+        const d = haversineMeters(lat, lon, s.lat, s.lon);
+        if (best === null || d < best.dist) {
+            best = { stop: s, dist: d };
+        }
+    }
+    return best; 
+}
+
+
+function findNearestBusToPoint(lat, lon) {
+    let best = null;
+    for (const [busId, marker] of Object.entries(busMarkerMap)) {
+        try {
+            const pos = marker.getLatLng();
+            const d = haversineMeters(lat, lon, pos.lat, pos.lng);
+            if (best === null || d < best.dist) {
+                best = { busId, marker, dist: d, lat: pos.lat, lon: pos.lng };
+            }
+        } catch (e) {
+            
+        }
+    }
+    return best; 
+}
+
+
+async function locateAndSuggestStop() {
+    if (!navigator.geolocation) {
+        alert("Geolocation not supported. Please pick a stop on the map.");
+        return;
+    }
+
+    
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+        const userLat = pos.coords.latitude;
+        const userLon = pos.coords.longitude;
+
+        
+        if (window.userLocMarker) map.removeLayer(window.userLocMarker);
+        window.userLocMarker = L.circleMarker([userLat, userLon], { radius: 8, color: '#1f2937', fillColor:'#fff', fillOpacity:1 }).addTo(map)
+            .bindPopup("You are here").openPopup();
+        map.setView([userLat, userLon], 15);
+
+        
+        const nearestStop = findNearestStop(userLat, userLon);
+        if (!nearestStop) return;
+        const stop = nearestStop.stop;
+        const stopMeters = Math.round(nearestStop.dist);
+
+        
+        if (window.nearestStopMarker) map.removeLayer(window.nearestStopMarker);
+        window.nearestStopMarker = L.marker([stop.lat, stop.lon], {
+            icon: L.divIcon({ html: `<div style="background:#4f46e5;color:white;padding:6px 8px;border-radius:6px;font-size:12px;">${stop.name}</div>`, className:'' })
+        }).addTo(map).bindPopup(`${stop.name}<br/>${stopMeters} m away`).openPopup();
+
+        
+        const nearestBus = findNearestBusToPoint(userLat, userLon);
+        let busMsg = "No live buses found nearby.";
+        if (nearestBus) {
+            const meters = Math.round(nearestBus.dist);
+
+            const etaMin = Math.round((distanceMeters / 5) / 60); 
+
+            busMsg = `Nearest bus: ${nearestBus.busId} — ${meters} m away`;
+            
+            if (window.userBusLine) map.removeLayer(window.userBusLine);
+            window.userBusLine = L.polyline([[userLat, userLon], [nearestBus.lat, nearestBus.lon]], { dashArray: '6 6' }).addTo(map);
+        }
+
+        
+        const infoHtml = `
+           <div style="font-weight:600;">Nearest stop: ${stop.name}</div>
+           <div style="font-size:12px;color:#6b7280;margin-top:4px;">${stopMeters} meters away</div>
+           <div style="margin-top:8px;">${busMsg}</div>
+           <div style="margin-top:10px;">
+             <a id="book-from-stop" href="booking_page.html?busId=${nearestBus ? encodeURIComponent(nearestBus.busId) : ''}" style="display:inline-block;padding:8px 10px;background:#4f46e5;color:white;border-radius:8px;text-decoration:none;">Book from here</a>
+           </div>
+        `;
+        
+        showMiniPanel(infoHtml); 
+
+    }, (err) => {
+        console.error("geolocation err", err);
+        alert("Couldn't get your location. Please enable location or choose a stop manually.");
+    }, { enableHighAccuracy: true, timeout: 8000 });
+}
+
+
+function showMiniPanel(html) {
+    let el = document.getElementById('mini-panel');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'mini-panel';
+        el.style.position = 'absolute';
+        el.style.top = '16px';
+        el.style.right = '16px';
+        el.style.zIndex = 9999;
+        el.style.background = 'white';
+        el.style.padding = '12px';
+        el.style.borderRadius = '12px';
+        el.style.boxShadow = '0 8px 30px rgba(0,0,0,0.15)';
+        el.style.maxWidth = '260px';
+        document.body.appendChild(el);
+    }
+    el.innerHTML = html;
+}
+
+
+const findStopBtn = document.createElement('button');
+findStopBtn.textContent = 'Find nearest stop';
+findStopBtn.style.position = 'absolute';
+findStopBtn.style.left = '16px';
+findStopBtn.style.top = '16px';
+findStopBtn.style.zIndex = 9999;
+findStopBtn.className = 'p-2 rounded bg-white shadow';
+findStopBtn.onclick = locateAndSuggestStop;
+document.body.appendChild(findStopBtn);
+</script>
+
+</body>
+</html>

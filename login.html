@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Login — Live Bus Demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen flex items-center justify-center bg-gray-100">
+  <div class="w-full max-w-md bg-white rounded-2xl p-8 shadow-lg">
+    <h1 class="text-2xl font-bold mb-4">Sign in</h1>
+    <p class="text-sm text-gray-500 mb-6">Use demo credentials: <strong>user:demo</strong> / <strong>pass:demo</strong></p>
+
+    <label class="block text-sm">Username</label>
+    <input id="username" class="w-full p-3 mb-4 border rounded" value="demo"/>
+
+    <label class="block text-sm">Password</label>
+    <input id="password" type="password" class="w-full p-3 mb-6 border rounded" value="demo"/>
+
+    <button id="loginBtn" class="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold">Login</button>
+    <button id="regBtn" class="w-full mt-3 bg-gray-200 text-gray-800 py-3 rounded-lg font-bold">Register</button>
+
+
+    <p id="msg" class="mt-4 text-sm text-red-500"></p>
+  </div>
+
+<script>
+const BACKEND = "http://127.0.0.1:8000"; 
+document.getElementById('regBtn').addEventListener('click', async () => {
+  const u = document.getElementById('username').value.trim();
+  const p = document.getElementById('password').value.trim();
+  const msg = document.getElementById('msg');
+  msg.textContent = '';
+
+  if (!u || !p) { msg.textContent = 'enter creds'; return; }
+
+  try {
+    const res = await fetch(BACKEND + '/register', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: u, password: p})
+    });
+    const j = await res.json();
+    if (!res.ok) { msg.textContent = j.detail || 'register failed'; return; }
+    msg.textContent = 'User registered! Now login.';
+  } catch (err) {
+    msg.textContent = 'network error';
+  }
+});
+
+
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const u = document.getElementById('username').value.trim();
+  const p = document.getElementById('password').value.trim();
+  const msg = document.getElementById('msg');
+  msg.textContent = '';
+
+  if (!u || !p) { msg.textContent = 'enter creds'; return; }
+
+  try {
+    const res = await fetch(BACKEND + '/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: u, password: p})
+    });
+    const j = await res.json();
+    if (!res.ok) {
+      msg.textContent = j.detail || (j.error) || 'login failed';
+      return;
+    }
+    
+    localStorage.setItem('bus_demo_token', j.token);
+    
+    localStorage.setItem('bus_demo_user', u);
+
+    
+    const qp = new URLSearchParams(window.location.search);
+    const redirect = qp.get('redirect') || 'map.html';
+    window.location = redirect;
+  } catch (err) {
+    msg.textContent = 'network error';
+    console.error(err);
+  }
+});
+</script>
+</body>
+</html>
